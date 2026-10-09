@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>THE LAST BELL</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:#050505;color:#eee;font-family:monospace}
+canvas{display:block}
+#menu,#ending{position:fixed;inset:0;z-index:5;background:radial-gradient(#242424,#020202);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px}
+h1{font-size:clamp(38px,9vw,76px);letter-spacing:5px;color:#b70000;text-shadow:3px 3px #111;margin:8px}
+p{max-width:520px;line-height:1.7;color:#ccc}
+button{font-family:monospace;background:#111;color:#eee;border:1px solid #a00;padding:13px 18px;font-size:16px;margin:8px;cursor:pointer}
+button:active{background:#500}
+#hud{position:fixed;top:12px;left:12px;right:12px;pointer-events:none;z-index:2;text-shadow:2px 2px #000;font-size:14px;display:none}
+#clock{font-size:20px;color:#e55}
+#message{position:fixed;bottom:23%;left:8%;right:8%;text-align:center;font-size:17px;text-shadow:2px 2px #000;pointer-events:none;z-index:3}
+#controls{position:fixed;bottom:18px;left:15px;right:15px;display:none;justify-content:space-between;align-items:end;z-index:4}
+.pad{display:grid;grid-template-columns:repeat(3,48px);grid-template-rows:repeat(2,48px);gap:4px}
+.control{background:#111b;border:1px solid #aaa8;color:white;border-radius:8px;font-size:20px;touch-action:none}
+#lookHint{position:fixed;bottom:130px;right:15px;color:#aaa;font-size:11px;display:none}
+#ending{display:none}
+</style>
+</head>
+<body>
+<div id="menu">
+<h1>THE LAST BELL</h1>
+<p>11:00 PM.<br>You fall asleep.<br><br>At midnight, you wake up in an abandoned school.<br>You don't remember how you got here.<br><br>Find the exit before <b>3:00 AM</b>.<br>Something is walking in the corridors.</p>
+<p>Use the arrows to move. Drag the screen to look around. Tap objects when you're close.</p>
+<button id="start">ENTER THE SCHOOL</button>
+<p style="font-size:11px;color:#777">HEADPHONES RECOMMENDED • KEEP YOUR FLASHLIGHT ON</p>
+</div>
+<div id="hud">
+<div id="clock">12:00 AM</div>
+<div id="status">OBJECTIVE: FIND A WAY OUT</div>
+<div id="warning"></div>
+</div>
+<div id="message"></div>
+<div id="controls">
+<div class="pad">
+<div></div><button class="control" data-move="forward">▲</button><div></div>
+<button class="control" data-move="left">◀</button><button class="control" data-move="back">▼</button><button class="control" data-move="right">▶</button>
+</div>
+<button class="control" id="inspect">INSPECT</button>
+</div>
+<div id="lookHint">DRAG RIGHT SIDE TO LOOK</div>
+<div id="ending">
+<h1 id="endTitle">YOU ESCAPED</h1>
+<p id="endText"></p>
+<button onclick="location.reload()">TRY AGAIN</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(() => {
+    const $ = id => document.getElementById(id);
+    let scene,camera,renderer,flashlight,ghost,clock;
+    let running=false,elapsed=0,last=0,yaw=0,pitch=0;
+    let keys={},touchMove={},objects=[],clues=0,exitUnlocked=false;
+    let messageTimer=0,ghostDistance=27,gameOver=false;
+    const raycaster=new THREE.Raycaster();
+    const forward=new THREE.Vector3();
+    const moveDir=new THREE.Vector3();
+    const player={x:0,y:1.65,z:8,speed:3.0};
+    const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+    function say(text,seconds=3){
+          $('message').textContent=text;
+            messageTimer=seconds;
+    }
+    function material(color,roughness=1){
+          return new THREE.MeshStandardMaterial({color,roughness});
+    }
+    function box(x,y,z,w,h,d,color,tag=''){
+          const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material(color));
+            mesh.position.set(x,y,z);
+              mesh.userData.tag=tag;
+                scene.add(mesh);
+                  if(tag)objects.push(mesh);
+                    return mesh;
+    }
+    function buildSchool(){
+          scene=new THREE.Scene();
+            scene.background=new THREE.Color(0x050608);
+              scene.fog=new THREE.FogExp2(0x070809,0.035);
+                camera=new THREE.PerspectiveCamera(72,innerWidth/innerHeight,0.1,90);
+                  camera.rotation.order='YXZ';
+                    renderer=new THREE.WebGLRenderer({antialias:false});
+                      renderer.setSize(innerWidth,innerHeight);
+                        renderer.setPixelRatio(1);
+                          renderer.outputColorSpace=THREE.SRGBColorSpace;
+                            document.body.appendChild(renderer.domElement);
+
+                              scene.add(new THREE.HemisphereLight(0x667080,0x16120e,0.45));
+                                const dim=new THREE.PointLight(0x998877,1.1,18);
+                                  dim.position.set(0,3,-8);scene.add(dim);
+
+                                    // Long corridor
+                                      box(0,-0.15,-9,8,0.3,42,0x34312c);
+                                        box(0,3.2,-9,8,0.3,42,0x191a1c);
+                                          box(-4,1.5,-9,0.3,3,42,0x38332e);
+                                            box(4,1.5,-9,0.3,3,42,0x38332e);
+
+                                              // Classroom doors and old ceiling lights
+                                                for(let z=7;z>=-27;z-=5){
+                                                        box(-3.82,1.35,z,0.12,2.3,1.7,0x211b18);
+                                                            box(3.82,1.35,z-2,0.12,2.3,1.7,0x211b18);
+                                                                box(0,3.0,z,1.4,0.06,0.28,0x77705c);
+                                                }
+
+                                                  // Blackboard and its clue
+                                                    box(0,1.8,-25.8,3.1,1.5,0.12,0x10251e,'board');
+                                                      box(0,2.58,-25.72,3.2,0.09,0.18,0x5b4934);
+                                                        // Exit door at the far end
+                                                          box(0,1.35,-29.7,1.8,2.7,0.2,0x29221b,'exit');
+                                                            box(0,2.8,-30,8,0.3,0.3,0x1b1917);
+
+                                                              // Random key location each round
+                                                                const spots=[
+                                                                        [-2.6,0.8,2], [2.5,0.8,-3],[-2.4,0.8,-9],
+                                                                            [2.4,0.8,-15],[-2.5,0.8,-20]
+                                                                ];
+                                                                  const spot=spots[Math.floor(Math.random()*spots.length)];
+                                                                    const key= new THREE.Mesh(
+                                                                            new THREE.TorusGeometry(0.15,0.045,6,12),
+                                                                                new THREE.MeshStandardMaterial({color:0xe0b84f,metalness:0.7,roughness:0.3})
+                                                                    );
+                                                                      key.position.set(...spot);
+                                                                        key.userData.tag='key';
+                                                                          scene.add(key);objects.push(key);
+
+                                                                            // A few inspectable objects
+                                                                              box(-3.35,1.1,-4,0.4,1.2,0.4,0x544438,'locker');
+                                                                                box(3.25,0.45,-12,1.2,0.8,0.8,0x40372d,'desk');
+                                                                                  box(-3.25,0.45,-18,1.2,0.8,0.8,0x40372d,'desk');
+
+                                                                                    // Original shadow ghost, not a specific existing character
+                                                                                      ghost=new THREE.Group();
+                                                                                        const robe=new THREE.Mesh(
+                                                                                                new THREE.ConeGeometry(0.65,2.3,7),
+                                                                                                    new THREE.MeshStandardMaterial({color:0x080808,roughness:1})
+                                                                                        );
+                                                                                          robe.position.y=1.15;ghost.add(robe);
+                                                                                            const face=new THREE.Mesh(
+                                                                                                    new THREE.SphereGeometry(0.32,8,8),
+                                                                                                        new THREE.MeshStandardMaterial({color:0xb8aaa0})
+                                                                                            );
+                                                                                              face.position.y=2.1;ghost.add(face);
+                                                                                                const eyeMat=new THREE.MeshBasicMaterial({color:0x990000});
+                                                                                                  for(const x of [-0.12,0.12]){
+                                                                                                        const eye=new THREE.Mesh(new THREE.SphereGeometry(0.035,6,6),eyeMat);
+                                                                                                            eye.position.set(x,2.13,0.29);ghost.add(eye);
+                                                                                                  }
+                                                                                                    ghost.position.set(2,0,-19);
+                                                                                                      scene.add(ghost);
+
+                                                                                                        flashlight=new THREE.SpotLight(0xffe8c7,5,19,Math.PI/7,0.55,1.2);
+                                                                                                          flashlight.position.set(0,0,0);
+                                                                                                            flashlight.target.position.set(0,0,-1);
+                                                                                                              camera.add(flashlight);
+                                                                                                                camera.add(flashlight.target);
+                                                                                                                  scene.add(camera);
+                                                                                                                    camera.position.set(player.x,player.y,player.z);
+                                                                                                                      $('hud').style.display='block';
+                                                                                                                        $('controls').style.display='flex';
+                                                                                                                          $('lookHint').style.display='block';
+    }
+
+    function getForward(){
+          forward.set(-Math.sin(yaw),0,-Math.cos(yaw));
+            return forward;
+    }
+    function updateCamera(){
+          camera.rotation.set(pitch,yaw,0,'YXZ');
+            camera.position.set(player.x,player.y,player.z);
+    }
+    function closestObject(){
+          let best=null,bestD=2.5;
+            for(const obj of objects){
+                    const d=obj.position.distanceTo(camera.position);
+                        if(d<bestD){best=obj;bestD=d;}
+            }
+              return best;
+    }
+    function inspect(){
+          if(!running)return;
+            const obj=closestObject();
+              if(!obj){say('Only silence answers you.',2);return;}
+                switch(obj.userData.tag){
+                        case 'key':
+                              scene.remove(obj);objects=objects.filter(o=>o!==obj);
+                                    exitUnlocked=true;clues++;
+                                          $('status').textContent='OBJECTIVE: REACH THE EXIT';
+                                                say('You found an old brass key. The exit may open now.',4);
+                                                      break;
+                                                          case 'board':
+                                                                say('BLACKBOARD: “The bell rings at three. Do not stay to hear the last note.”',5);
+                                                                      clues++;
+                                                                            break;
+                                                                                case 'exit':
+                                                                                      if(exitUnlocked)endGame(true,'The door groans open. Cold night air rushes in. You escaped—but you still do not know why you woke up here.');
+                                                                                            else say('The exit is locked. Find the brass key.',3);
+                                                                                                  break;
+                                                                                                      case 'locker':
+                                                                                                            say('A locker door hangs open. Something has scratched the inside: “IT KNOWS WHERE YOU ARE.”',4);
+                                                                                                                  break;
+                                                                                                                      case 'desk':
+                                                                                                                            say('A student desk. Someone has carved a tiny bell into the wood.',3);
+                                                                                                                                  break;
+                }
+    }
+
+    function endGame(won,text){
+          if(gameOver)return;
+            gameOver=true;running=false;
+              $('ending').style.display='flex';
+                $('endTitle').textContent=won?'YOU ESCAPED':'THE LAST BELL';
+                  $('endText').textContent=text;
+    }
+    function update(dt){
+          if(!running||gameOver)return;
+            elapsed+=dt/60; // 1 real minute = 1 game hour
+              const hour=Math.floor(elapsed);
+                const minute=Math.floor((elapsed-hour)*60);
+                  $('clock').textContent=(12+hour>12?12+hour-12:12+hour)+':'+String(minute).padStart(2,'0')+' AM';
+                    if(elapsed>=3){
+                            endGame(false,'3:00 AM. The final bell rings. A pale figure stands in the doorway, smiling. You should have left before the bell.');
+                                return;
+                    }
+
+                      const f=getForward();
+                        const right=new THREE.Vector3(-f.z,0,f.x);
+                          moveDir.set(0,0,0);
+                            if(keys['forward']||touchMove.forward)moveDir.add(f);
+                              if(keys['back']||touchMove.back)moveDir.sub(f);
+                                if(keys['left']||touchMove.left)moveDir.sub(right);
+                                  if(keys['right']||touchMove.right)moveDir.add(right);
+                                    if(moveDir.lengthSq()>0){
+                                            moveDir.normalize().multiplyScalar(player.speed*dt);
+                                                player.x=clamp(player.x+moveDir.x,-3.25,3.25);
+                                                    player.z=clamp(player.z+moveDir.z,-29,10);
+                                    }
+
+                                      // Ghost slowly stalks the player; it becomes more dangerous over time.
+                                        const target=new THREE.Vector3(player.x,0,player.z);
+                                          const gpos=ghost.position;
+                                            const dist=gpos.distanceTo(target);
+                                              ghostDistance=dist;
+                                                const speed=0.25+elapsed*0.18;
+                                                  if(dist>2.1){
+                                                        gpos.x+=(target.x-gpos.x)/dist*speed*dt;
+                                                            gpos.z+=(target.z-gpos.z)/dist*speed*dt;
+                                                  }else{
+                                                        endGame(false,'A cold hand touches your shoulder. A quiet laugh echoes through the empty school.');
+                                                            return;
+                                                  }
+                                                    ghost.lookAt(player.x,1.4,player.z);
+
+                                                      const danger=elapsed>1.8?'SOMETHING IS GETTING CLOSER…':'';
+                                                        $('warning').textContent=danger;
+                                                          updateCamera();
+
+                                                            if(messageTimer>0){
+                                                                    messageTimer-=dt;
+                                                                        if(messageTimer<=0)$('message').textContent='';
+                                                            }
+    }
+
+    function loop(t){
+          requestAnimationFrame(loop);
+            const dt=Math.min((t-last)/1000||0,0.05);last=t;
+              update(dt);
+                if(renderer&&scene&&camera)renderer.render(scene,camera);
+    }
+    $('start').addEventListener('click',()=>{
+          $('menu').style.display='none';
+            buildSchool();
+              running=true;
+                last=performance.now();
+                  say('12:00 AM. The school smells of dust and rain.',4);
+                    requestAnimationFrame(loop);
+    });
+
+    document.querySelectorAll('[data-move]').forEach(btn=>{
+          const name=btn.dataset.move;
+            const down=e=>{e.preventDefault();touchMove[name]=true;};
+              const up=e=>{e.preventDefault();touchMove[name]=false;};
+                btn.addEventListener('pointerdown',down);
+                  btn.addEventListener('pointerup',up);
+                    btn.addEventListener('pointercancel',up);
+                      btn.addEventListener('pointerleave',up);
+    });
+    $('inspect').addEventListener('click',inspect);
+
+    document.addEventListener('keydown',e=>{
+          const map={w:'forward',ArrowUp:'forward',s:'back',ArrowDown:'back',a:'left',ArrowLeft:'left',d:'right',ArrowRight:'right'};
+            if(map[e.key])keys[map[e.key]]=true;
+              if(e.key==='e'||e.key===' ')inspect();
+    });
+    document.addEventListener('keyup',e=>{
+          const map={w:'forward',ArrowUp:'forward',s:'back',ArrowDown:'back',a:'left',ArrowLeft:'left',d:'right',ArrowRight:'right'};
+            if(map[e.key])keys[map[e.key]]=false;
+    });
+
+    let dragging=false,lastX=0,lastY=0;
+    rendererSafe();
+    function rendererSafe(){
+          document.addEventListener('pointerdown',e=>{
+                if(e.target.closest('button'))return;
+                    dragging=true;lastX=e.clientX;lastY=e.clientY;
+          });
+            document.addEventListener('pointermove',e=>{
+                    if(!dragging||!running)return;
+                        const dx=e.clientX-lastX,dy=e.clientY-lastY;
+                            lastX=e.clientX;lastY=e.clientY;
+                                yaw-=dx*0.004;
+                                    pitch=clamp(pitch-dy*0.003,-1.15,1.15);
+            });
+              document.addEventListener('pointerup',()=>dragging=false);
+                document.addEventListener('pointercancel',()=>dragging=false);
+    }
+    window.addEventListener('resize',()=>{
+          if(!camera||!renderer)return;
+            camera.aspect=innerWidth/innerHeight;
+              camera.updateProjectionMatrix();
+                renderer.setSize(innerWidth,innerHeight);
+    });
+})();
+</script>
+</body>
+</html>
+
+                                                                    )
+                                                                ]
+                                                }
+    }
+})
